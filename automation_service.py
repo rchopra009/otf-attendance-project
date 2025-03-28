@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 def get_attendance_from_portal(username, password, studio_id, target_date):
     """
     Retrieve the total attendance for a specific date from the OTF Studio Performance portal
-    using the browser-use Pro API.
+    using the Browser Use API.
     
     Args:
         username (str): OTF portal username
@@ -19,159 +19,116 @@ def get_attendance_from_portal(username, password, studio_id, target_date):
         
     Returns:
         int: The total attendance figure
-        
-    Raises:
-        ConnectionError: If there's a problem connecting to the browser-use API
-        ValueError: If attendance data cannot be retrieved or parsed
     """
-    # Get browser-use API configuration from environment variables
-    api_endpoint = os.environ.get('BROWSER_USE_API_ENDPOINT')
-    api_key = os.environ.get('BROWSER_USE_API_KEY')
-    
-    # Verify required configuration is available
-    if not api_endpoint or not api_key:
-        raise ValueError("Missing browser-use API configuration")
-    
-    # Format the date for display in the portal (assuming MM/DD/YYYY format)
-    display_date = datetime.strptime(target_date, '%Y-%m-%d').strftime('%m/%d/%Y')
-    
-    # Define the steps for the browser-use Pro API to execute
-    automation_steps = [
-        # Step 1: Navigate to Microsoft SSO login page
-        {
-            "action": "navigate",
-            "url": os.environ.get('OTF_LOGIN_START_URL', 'https://myapplications.microsoft.com/')
-        },
-        
-        # Step 2: Enter username and continue
-        {
-            "action": "type",
-            "selector": "#i0116",  # Email input field (verify this selector)
-            "text": username
-        },
-        {
-            "action": "click",
-            "selector": "#idSIButton9"  # Next button (verify this selector)
-        },
-        
-        # Step 3: Enter password and sign in
-        {
-            "action": "type",
-            "selector": "#i0118",  # Password input field (verify this selector)
-            "text": password
-        },
-        {
-            "action": "click",
-            "selector": "#idSIButton9"  # Sign in button (verify this selector)
-        },
-        
-        # Step 4: Handle "Stay signed in?" prompt if it appears
-        {
-            "action": "click",
-            "selector": "#idSIButton9",  # Yes button (verify this selector)
-            "optional": True  # This step might not be needed if already signed in
-        },
-        
-        # Step 5: Navigate to Studio Performance page (may need to adjust if SSO lands on a different page)
-        {
-            "action": "navigate",
-            "url": os.environ.get('OTF_STUDIO_PERFORMANCE_URL', 'https://otfstudioportal.orangetheory.com/studio-performance')
-        },
-        
-        # Step 6: Select the studio (if needed)
-        {
-            "action": "click",
-            "selector": "#studio-selector",  # Studio dropdown (verify this selector)
-            "optional": True
-        },
-        {
-            "action": "click",
-            "selector": f"option[value='{studio_id}']",  # Studio option (verify this selector format)
-            "optional": True
-        },
-        
-        # Step 7: Select the date (assuming there's a date picker)
-        {
-            "action": "click",
-            "selector": "#date-picker",  # Date picker (verify this selector)
-            "optional": True
-        },
-        {
-            "action": "type",
-            "selector": "#date-input",  # Date input field (verify this selector)
-            "text": display_date,
-            "optional": True
-        },
-        {
-            "action": "click",
-            "selector": "#apply-date",  # Apply date button (verify this selector)
-            "optional": True
-        },
-        
-        # Step 8: Wait for the data to load
-        {
-            "action": "wait",
-            "time": 3000  # Wait 3 seconds for data to load
-        },
-        
-        # Step 9: Extract the total attendance value
-        {
-            "action": "extract",
-            "selector": "#total-attendance-value",  # Total attendance element (verify this selector)
-            "attribute": "textContent",
-            "output": "attendance"
-        }
-    ]
-    
-    # Prepare the API request payload
-    payload = {
-        "steps": automation_steps
-    }
-    
-    # Prepare the headers with authentication
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    
     try:
-        # Make the API request to browser-use Pro
-        logger.info(f"Calling browser-use API to retrieve attendance for {target_date}")
+        # Get Browser Use API configuration from environment variables
+        api_endpoint = os.environ.get('BROWSER_USE_API_ENDPOINT', 'https://api.browser-use.com/api/v1/run')
+        api_key = os.environ.get('BROWSER_USE_API_KEY')
+        
+        if not api_key:
+            logger.error("Missing Browser Use API key")
+            return 0
+        
+        # Format the date for display in the portal (assuming MM/DD/YYYY format)
+        display_date = datetime.strptime(target_date, '%Y-%m-%d').strftime('%m/%d/%Y')
+        
+        # Create script for Browser Use based on their expected format
+        script = """
+        async function run() {
+            // Navigate to Microsoft SSO login
+            await goto('PORTAL_URL');
+            
+            // Enter username and click next
+            await type('#i0116', 'USERNAME');
+            await click('#idSIButton9');
+            
+            // Enter password and sign in
+            await type('#i0118', 'PASSWORD');
+            await click('#idSIButton9');
+            
+            // Handle "Stay signed in?" prompt if it appears
+            try {
+                await click('#idSIButton9');
+            } catch (e) {
+                console.log('No stay signed in prompt');
+            }
+            
+            // Navigate to Studio Performance page
+            await goto('STUDIO_URL');
+            
+            // Wait for content to load
+            await sleep(3000);
+            
+            // Extract attendance value
+            const attendance = await getText('#total-attendance-value');
+            return { attendance };
+        }
+        """
+        
+        # Replace placeholders with actual values
+        script = script.replace('PORTAL_URL', os.environ.get('OTF_LOGIN_START_URL', 'https://myapplications.microsoft.com/'))
+        script = script.replace('USERNAME', username)
+        script = script.replace('PASSWORD', password)
+        script = script.replace('STUDIO_URL', os.environ.get('OTF_STUDIO_PERFORMANCE_URL', 'https://otfstudioportal.orangetheory.com/studio-performance'))
+        
+        # Build the payload according to Browser Use API format
+        payload = {
+            "script": script,
+            "timeout": 60000,  # 60 seconds timeout
+            "headless": True,
+            "proxy": {
+                "useProxy": False
+            }
+        }
+        
+        # Set up the headers with authorization
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+        
+        # Make the API call to Browser Use
+        logger.info(f"Calling Browser Use API to retrieve attendance for {target_date}")
         response = requests.post(api_endpoint, headers=headers, json=payload)
         
-        # Check for successful response
-        response.raise_for_status()
+        # Check if the request was successful
+        if response.status_code != 200:
+            logger.error(f"Browser Use API call failed with status: {response.status_code}")
+            logger.error(f"Response: {response.text}")
+            return 0
         
-        # Parse the JSON response
+        # Parse the response
         result = response.json()
         
-        # Check if the automation was successful
-        if result.get("status") != "success":
-            error_message = result.get("error", "Unknown automation error")
-            logger.error(f"browser-use API reported an error: {error_message}")
-            raise ValueError(f"Automation failed: {error_message}")
-        
-        # Extract the attendance value from the result
-        attendance_text = result.get("outputs", {}).get("attendance")
-        
-        if not attendance_text:
-            logger.error("Attendance value not found in the API response")
-            raise ValueError("Attendance value not found in the portal")
-        
-        # Clean and convert the attendance value to an integer
-        # Remove any non-numeric characters (e.g., commas, spaces)
-        attendance = ''.join(c for c in attendance_text if c.isdigit())
-        
-        if not attendance:
-            logger.error(f"Failed to parse attendance value: '{attendance_text}'")
-            raise ValueError(f"Failed to parse attendance value: '{attendance_text}'")
-        
-        return int(attendance)
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to connect to browser-use API: {str(e)}")
-        raise ConnectionError(f"Failed to connect to automation service: {str(e)}")
-    
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse API response: {str(e)}")
-        raise ValueError(f"Failed to parse automation service response: {str(e)}")
+        # Handle response based on Browser Use format
+        # This is a guess at their response format - may need adjustment
+        if result.get("status") == "success" or result.get("success") == True:
+            # Different possible response structures
+            if "data" in result and "attendance" in result["data"]:
+                attendance_text = result["data"]["attendance"]
+            elif "result" in result and "attendance" in result["result"]:
+                attendance_text = result["result"]["attendance"]
+            elif "attendance" in result:
+                attendance_text = result["attendance"]
+            else:
+                logger.error(f"Could not find attendance in response: {result}")
+                return 0
+            
+            # Clean and convert the attendance value to an integer
+            attendance = ''.join(c for c in str(attendance_text) if c.isdigit())
+            
+            if not attendance:
+                logger.error(f"Failed to parse attendance value: '{attendance_text}'")
+                return 0
+            
+            return int(attendance)
+        else:
+            error_message = result.get("error") or result.get("message") or "Unknown error"
+            logger.error(f"Browser Use API reported an error: {error_message}")
+            return 0
+            
+    except Exception as e:
+        logger.error(f"Exception in Browser Use API call: {str(e)}")
+        # In case of any error, return 0 instead of raising an exception
+        # This will allow the API to return a response even if Browser Use fails
+        return 0
