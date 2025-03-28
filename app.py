@@ -35,7 +35,11 @@ def get_yesterdays_attendance():
         # Calculate yesterday's date
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         
-        logger.info(f"Retrieving attendance for {yesterday} for studio {studio_id}")
+        # Get yesterday's day name for the response
+        yesterday_date = datetime.now() - timedelta(days=1)
+        day_name = yesterday_date.strftime('%A')  # E.g., "Thursday"
+        
+        logger.info(f"Retrieving attendance for {yesterday} ({day_name}) for studio {studio_id}")
         
         # Check for credentials
         if not username or not password:
@@ -58,6 +62,7 @@ def get_yesterdays_attendance():
             "studio_id": studio_id,
             "studio_name": studio_name,
             "date": yesterday,
+            "day_of_week": day_name,
             "status": "success"
         })
         
