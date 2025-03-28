@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +29,21 @@ def get_attendance_from_portal(username, password, studio_id, target_date):
             logger.error("Missing Browser Use API key")
             return 0
         
-        # Format the date for display in the portal (assuming MM/DD/YYYY format)
-        display_date = datetime.strptime(target_date, '%Y-%m-%d').strftime('%m/%d/%Y')
+        # Calculate yesterday's day of week (0 is Monday, 6 is Sunday)
+        target_date_obj = datetime.strptime(target_date, '%Y-%m-%d')
+        day_of_week = target_date_obj.weekday()
         
-        # Create script for Browser Use based on their expected format
+        # Map day_of_week to column index (1-based to match table)
+        # Monday=1, Tuesday=2, Wednesday=3, Thursday=4, Friday=5, Saturday=6
+        column_index = day_of_week + 1
+        
+        # Map to day name for logging
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        day_name = day_names[day_of_week]
+        
+        logger.info(f"Target date {target_date} is a {day_name}, using column index {column_index}")
+        
+        # Create script for Browser Use
         script = """
         async function run() {
             // Navigate to Microsoft SSO login
@@ -53,14 +64,39 @@ def get_attendance_from_portal(username, password, studio_id, target_date):
                 console.log('No stay signed in prompt');
             }
             
-            // Navigate to Studio Performance page
-            await goto('STUDIO_URL');
-            
-            // Wait for content to load
+            // Wait for login to complete
             await sleep(3000);
             
-            // Extract attendance value
-            const attendance = await getText('#total-attendance-value');
+            // Navigate to Studio Performance app
+            await goto('OTF_STUDIO_PERFORMANCE_URL');
+            
+            // Wait for page to load
+            await sleep(5000);
+            
+            // Click on CLASS ATTENDANCE tab
+            await click('text=CLASS ATTENDANCE');
+            
+            // Wait for tab content to load
+            await sleep(3000);
+            
+            // Verify the studio is selected correctly
+            // This might require adjustment based on actual UI
+            
+            // Find the "Workouts Taken" row in the Traffic by Day of Week table
+            // and extract the value for the target day of week
+            // We need to get the cell in the Workouts Taken row and the column for our day of week
+            
+            // This is a CSS selector for the table cell in the Workouts Taken row and
+            // the column corresponding to our day of week
+            const selector = `table tr:has(td:first-child:contains("Workouts Taken")) td:nth-child(DAY_COLUMN)`;
+            const daySelector = selector.replace('DAY_COLUMN', 'COLUMN_INDEX');
+            
+            console.log('Looking for attendance with selector:', daySelector);
+            
+            // Extract the attendance value
+            const attendance = await getText(daySelector);
+            console.log('Found attendance value:', attendance);
+            
             return { attendance };
         }
         """
@@ -69,7 +105,8 @@ def get_attendance_from_portal(username, password, studio_id, target_date):
         script = script.replace('PORTAL_URL', os.environ.get('OTF_LOGIN_START_URL', 'https://myapplications.microsoft.com/'))
         script = script.replace('USERNAME', username)
         script = script.replace('PASSWORD', password)
-        script = script.replace('STUDIO_URL', os.environ.get('OTF_STUDIO_PERFORMANCE_URL', 'https://otfstudioportal.orangetheory.com/studio-performance'))
+        script = script.replace('OTF_STUDIO_PERFORMANCE_URL', os.environ.get('OTF_STUDIO_PERFORMANCE_URL', 'https://portal.orangetheory.com/apps/studios/StudioPerformance?_embed=true'))
+        script = script.replace('COLUMN_INDEX', str(column_index + 1))  # +1 because first column is the row label
         
         # Build the payload according to Browser Use API format
         payload = {
@@ -101,7 +138,6 @@ def get_attendance_from_portal(username, password, studio_id, target_date):
         result = response.json()
         
         # Handle response based on Browser Use format
-        # This is a guess at their response format - may need adjustment
         if result.get("status") == "success" or result.get("success") == True:
             # Different possible response structures
             if "data" in result and "attendance" in result["data"]:
